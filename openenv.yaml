@@ -1,0 +1,34 @@
+name: queryscaler
+version: 1.0.0
+description: Cross-platform query optimization sandbox with three graded tasks (DuckDB)
+author: Harshul
+license: MIT
+entrypoint: python -m queryscaler.server.app
+
+action_space:
+  type: object
+  properties:
+    action_type:
+      type: string
+      enum: [execute, explain, finish]
+    sql:
+      type: string
+      nullable: true
+    reasoning:
+      type: string
+      nullable: true
+  required: [action_type]
+
+observation_space:
+  type: object
+  properties:
+    step_number: {type: integer}
+    task_id: {type: string}
+    task_description: {type: string}
+    tables: {type: array, items: {type: string}}
+    last_result: {type: string, nullable: true}
+    last_exit_code: {type: integer, nullable: true}
+    progress: {type: number}
+    hints: {type: array, items: {type: string}}
+    reward: {type: number}
+    done: {type: boolean}
