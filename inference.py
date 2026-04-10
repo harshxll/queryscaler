@@ -26,7 +26,7 @@ except ModuleNotFoundError:
 # ── Environment configuration (mandatory) ────────────────────────────────────
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
 MODEL_NAME   = os.getenv("MODEL_NAME",   "llama3-70b-8192")
-API_KEY      = os.getenv("HF_TOKEN")
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 BENCHMARK               = "queryscaler"
 TEMPERATURE             = 0.0
