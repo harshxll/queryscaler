@@ -1,3 +1,10 @@
+---
+title: QueryScaler
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_port: 7860
+---
 # QueryScaler
 
 ### Reinforcement Learning Environment for SQL Query Optimization
