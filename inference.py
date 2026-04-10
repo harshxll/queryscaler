@@ -285,7 +285,7 @@ def run_episode(
             if done:
                 break
 
-        final_score = max(0.0, min(1.0, final_score))
+        final_score = max(0.0001, min(0.9999, final_score))
         success     = final_score >= SUCCESS_SCORE_THRESHOLD
 
     finally:
