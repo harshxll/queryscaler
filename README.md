@@ -1,271 +1,304 @@
-# 🚀 QueryScaler: RL-Based SQL Query Optimization Environment
+# QueryScaler
 
-QueryScaler is a **Reinforcement Learning environment for SQL query optimization**, where an agent learns to improve query performance through iterative actions such as indexing, query rewriting, and execution plan analysis.
+### Reinforcement Learning Environment for SQL Query Optimization
 
-Built using **OpenEnv + DuckDB + LLM-based agents**, QueryScaler simulates real-world database optimization tasks with structured rewards and multi-step decision making.
+QueryScaler is a learning-based SQL query optimization system that models query tuning as a Reinforcement Learning (RL) problem. An agent iteratively interacts with a database environment, applying transformations such as indexing and query rewriting, and receives feedback based on actual execution performance.
 
----
-
-## 📌 Motivation
-
-Modern query optimizers:
-
-* Use static heuristics
-* Struggle with dynamic workloads
-* Cannot adapt to evolving data patterns
-
-👉 QueryScaler introduces:
-
-> **A learning-based optimizer that improves through interaction**
+The system integrates RL principles, a real execution engine (DuckDB), and LLM-based policies to enable adaptive and data-driven query optimization.
 
 ---
 
-## 🧠 Core Idea
+## Problem Statement
 
-We model SQL optimization as a **Markov Decision Process (MDP)**:
+Traditional database query optimizers rely on:
 
-| RL Component | QueryScaler Mapping                            |
-| ------------ | ---------------------------------------------- |
-| State        | Current database + query + history             |
-| Action       | SQL execution (index, rewrite, explain)        |
-| Reward       | Performance improvement + optimization quality |
-| Policy       | Agent strategy (LLM / RL)                      |
-| Environment  | DuckDB-backed simulation                       |
+* Static heuristics
+* Cost estimation models
+* Limited adaptability to evolving workloads
 
----
+These approaches often fail to generalize across diverse queries and dynamic data distributions.
 
-## 🏗️ Architecture
-
-```
-LLM Agent (Policy)
-        ↓
-Action (SQL / Explain / Finish)
-        ↓
-QueryScaler Environment
-        ↓
-DuckDB Execution + Cost Measurement
-        ↓
-Reward Computation
-        ↓
-Next State (Observation)
-```
+QueryScaler addresses this limitation by introducing an environment where optimization strategies are learned through interaction and reward feedback.
 
 ---
 
-## ⚙️ Environment Design
+## Core Idea
 
-### 📂 Implementation
+SQL query optimization is modeled as a Markov Decision Process (MDP):
 
-* Environment: 
-* Inference Runner: 
-
----
-
-### 🧾 State (Observation)
-
-Each step returns:
-
-* Task description
-* Available tables
-* Last query result / error
-* Current reward (progress)
-* Optimization hints
+| RL Concept  | QueryScaler Mapping                              |
+| ----------- | ------------------------------------------------ |
+| State       | Database state, query, and interaction history   |
+| Action      | SQL execution, explain plan, or termination      |
+| Reward      | Performance improvement and optimization quality |
+| Policy      | Agent (LLM or RL-based)                          |
+| Environment | DuckDB-backed execution system                   |
 
 ---
 
-### 🎯 Action Space
+## Project Structure
 
-Agent outputs JSON:
-
-```json
-{"action_type": "execute", "sql": "..."}
-{"action_type": "explain", "sql": "..."}
-{"action_type": "finish"}
+```bash id="structure_final"
+queryscaler/
+├── client.py                      # Client interface for interacting with the environment
+├── inference.py                   # LLM-based agent runner (policy execution)
+├── main.py                        # Entry point / orchestration script
+├── models.py                      # Action and Observation schemas
+├── table_generator.py             # Synthetic data generation utilities
+│
+├── server/
+│   ├── app.py                     # OpenEnv server entry point
+│   ├── queryscaler_environment.py # Core RL environment implementation
+│   └── __init__.py
+│
+├── test_env.py                    # Environment tests
+├── test_env_llm.py                # LLM interaction tests
+├── test_reward_environment.py     # Reward function validation
+├── test_table_generator.py        # Data generation tests
+│
+├── Dockerfile                     # Container configuration
+├── requirements.txt               # Python dependencies
+├── pyproject.toml                 # Project configuration
+├── openenv.yaml                   # OpenEnv configuration
+├── prevalidate.sh                 # Pre-submission validation script
+├── uv.lock                        # Dependency lock file
+├── README.md                      # Documentation
+└── __init__.py
 ```
 
----
-
-### 🏆 Reward Function (Key Innovation)
-
-Reward is **multi-component + shaped for learning stability**:
-
-#### 1. Speed Improvement
-
-* Based on runtime vs baseline
-
-#### 2. Structural Quality
-
-* Penalizes:
-
-  * SELECT *
-  * excessive joins
-* Rewards:
-
-  * filters, limits
-
-#### 3. Strategy Usage
-
-* Index creation
-* CTE usage
-* Views / subqueries
-
-#### 4. Index Quality
-
-* Matches index columns with query filters
-
-#### 5. Anti-Repetition Penalty
-
-* Prevents redundant actions
+> Note: Automatically generated folders such as `__pycache__/` and compiled files (`*.pyc`) are excluded from version control and documentation.
 
 ---
 
-### 🔥 Final Reward
+## Environment Design
 
-* Weighted combination of:
+### Core Environment
 
-  * speed + optimization signals
-* Smoothed using EMA for stability
-* Encourages **progressive learning**
+Implemented in: 
 
----
+The environment simulates a query optimization workflow by:
 
-## 🧪 Tasks
-
-### 🟢 Easy: Index Optimization
-
-* Optimize a filtered query on large table
-
-### 🟡 Medium: Query Rewrite + Joins
-
-* Optimize multi-table joins
-
-### 🔴 Hard: Workload Optimization
-
-* Optimize multiple queries
-* Constraint: max 2 indexes
+* Maintaining database state
+* Executing SQL commands
+* Tracking optimization progress
+* Providing structured observations to the agent
 
 ---
 
-## ⚡ Key Features
+## Action and Observation Interface
 
-* 🔄 Multi-step optimization environment
-* 📊 Real execution-based rewards (DuckDB)
-* 🧠 LLM-driven policy (ReAct style)
-* 🎯 Reward shaping for convergence
-* 🚫 Anti-repetition safeguards
-* 📈 Progressive reward scaling
+### Action Schema
 
----
+```python id="action_schema"
+class QueryscalerAction(Action):
+    action_type: str   # "execute", "explain", or "finish"
+    sql: Optional[str]
+    reasoning: Optional[str]
+```
 
-## 🤖 LLM Agent Design
+### Observation Schema
 
-From :
+```python id="observation_schema"
+class QueryscalerObservation(Observation):
+    step_number: int
+    task_id: str
+    task_description: str
+    tables: list[str]
+    last_result: Optional[str]
+    last_exit_code: Optional[int]
+    progress: float
+    hints: list[str]
+```
 
-### Key Behaviors
+This structured interface enables:
 
-* Avoid repeated actions
-* Prefer:
-
-  * CREATE INDEX
-  * Query rewrites
-* Use EXPLAIN only once
-* Learn from reward deltas
-
----
-
-## 🛠️ Tech Stack
-
-* Python
-* DuckDB
-* OpenEnv framework
-* sqlglot (SQL parsing)
-* OpenAI / Groq LLM APIs
+* Compatibility with OpenEnv-style environments
+* Seamless integration with LLM agents
+* Multi-step reasoning and decision-making workflows
 
 ---
 
-## ▶️ Setup
+## Action Types
 
-```bash
-git clone <repo>
+| Action Type | Description                                         |
+| ----------- | --------------------------------------------------- |
+| execute     | Execute SQL statements (e.g., CREATE INDEX, SELECT) |
+| explain     | Retrieve query execution plans                      |
+| finish      | Terminate the optimization episode                  |
+
+---
+
+## Reward System
+
+QueryScaler employs a composite reward function designed to encourage meaningful optimization behavior.
+
+### Components
+
+1. **Performance Improvement**
+
+   * Based on execution time relative to a baseline query
+
+2. **Structural Quality**
+
+   * Penalizes inefficient constructs such as `SELECT *` and excessive joins
+   * Rewards use of filters and limits
+
+3. **Strategy Utilization**
+
+   * Rewards actions such as index creation, CTE usage, views, and schema modifications
+
+4. **Index Effectiveness**
+
+   * Measures alignment between index columns and query predicates
+
+5. **Repetition Penalty**
+
+   * Penalizes redundant or repeated actions
+
+---
+
+### Final Reward
+
+```id="reward_formula"
+reward = 0.35 * speed_score + 0.65 * optimization_signal
+```
+
+Additional mechanisms:
+
+* Exponential Moving Average (EMA) smoothing
+* Progressive reward scaling for stable convergence
+
+---
+
+## Tasks
+
+### Easy: Index Optimization
+
+* Optimize a single-table query using indexing
+
+### Medium: Query Rewrite and Join Optimization
+
+* Improve performance of multi-table joins
+
+### Hard: Workload Optimization
+
+* Optimize multiple queries with constraints (e.g., limited number of indexes)
+
+---
+
+## Data Generation
+
+Implemented in: 
+
+Features include:
+
+* Synthetic dataset generation
+* Support for multiple statistical distributions (uniform, Zipf, log-normal)
+* Configurable schema and null values
+* Scalable workloads for benchmarking
+
+---
+
+## Agent Design
+
+Implemented in: 
+
+Key characteristics:
+
+* ReAct-style interaction loop
+* Reward-aware decision making
+* Prevention of repeated actions
+* Strategy-oriented prompting
+
+---
+
+## Typical Optimization Workflow
+
+1. Inspect schema using `DESCRIBE`
+2. Analyze query plan using `EXPLAIN`
+3. Apply index creation
+4. Rewrite queries for efficiency
+5. Iterate based on reward feedback
+6. Terminate optimization
+
+---
+
+## Setup
+
+```bash id="setup_final"
+git clone <repository_url>
 cd queryscaler
 pip install -r requirements.txt
 ```
 
 ---
 
-## 🔑 Environment Variables
+## Environment Configuration
 
-```bash
-export GROQ_API_KEY=your_key
+```bash id="env_final"
+export GROQ_API_KEY=your_api_key
 export API_BASE_URL=https://api.groq.com/openai/v1
 export MODEL_NAME=llama3-70b-8192
 ```
 
 ---
 
-## ▶️ Run
+## Running the System
 
-```bash
-python inference_runner.py
+```bash id="run_final"
+python inference.py
 ```
 
 ---
 
-## 📊 Example Workflow
+## Testing
 
-1. Agent inspects schema
-2. Runs EXPLAIN once
-3. Creates index
-4. Rewrites query
-5. Observes reward increase
-6. Iterates until optimal
+```bash id="test_final"
+pytest
+```
 
 ---
 
-## ⚠️ Challenges Addressed
+## Key Features
 
-* Sparse rewards → solved via shaping
-* Large action space → constrained via SQL interface
-* Exploration vs exploitation → guided prompt + penalties
-* Realistic cost → execution-based measurement
-
----
-
-## 🌍 Real-World Applications
-
-* Autonomous database tuning
-* Cloud query optimization (BigQuery, Snowflake)
-* AI-driven compilers
-* Data warehouse performance tuning
+* Multi-step reinforcement learning environment
+* Execution-based reward computation using DuckDB
+* Integration with LLM-based agents
+* Structured action-observation interface
+* Robust reward shaping for stable learning
 
 ---
 
-## 🚀 Future Work
+## Challenges Addressed
 
-* Learned cost model (replace DuckDB estimates)
-* Graph-based state encoding (GNNs)
-* Multi-agent optimization
-* Integration with production DBs
+| Challenge               | Approach                               |
+| ----------------------- | -------------------------------------- |
+| Sparse rewards          | Reward shaping and progressive scaling |
+| Large action space      | Structured SQL-based action design     |
+| Instability in learning | EMA smoothing                          |
+| Agent repetition        | Explicit penalties and safeguards      |
 
 ---
 
-## 👨‍💻 Author
+## Applications
 
-**Harshul Arora**
+* Autonomous database tuning systems
+* Query optimization in analytical engines
+* AI-assisted compilers and planners
+* Performance optimization in data platforms
+
+---
+
+## Future Work
+
+* Learned cost models using machine learning
+* Graph-based representations of query plans
+* Multi-agent optimization frameworks
+* Integration with production-grade databases
+
+---
+
+## Author
+
+Harshul Arora
 Punjab Engineering College
-
----
-
-## 🏆 Why This Project Stands Out
-
-✔ Combines RL + Systems + LLMs
-✔ Real execution-based feedback (not simulated heuristics)
-✔ Generalizable optimization framework
-✔ Designed for **agent learning, not rule-based tuning**
-
----
-
-## 📜 License
-
-MIT License
-
