@@ -1,255 +1,271 @@
----
-title: Queryscaler Environment Server
-emoji: 🎵
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-pinned: false
-app_port: 8000
-base_path: /web
-tags:
-  - openenv
+# 🚀 QueryScaler: RL-Based SQL Query Optimization Environment
+
+QueryScaler is a **Reinforcement Learning environment for SQL query optimization**, where an agent learns to improve query performance through iterative actions such as indexing, query rewriting, and execution plan analysis.
+
+Built using **OpenEnv + DuckDB + LLM-based agents**, QueryScaler simulates real-world database optimization tasks with structured rewards and multi-step decision making.
+
 ---
 
-# Queryscaler Environment
+## 📌 Motivation
 
-A simple test environment that echoes back messages. Perfect for testing the env APIs as well as demonstrating environment usage patterns.
+Modern query optimizers:
 
-## Quick Start
+* Use static heuristics
+* Struggle with dynamic workloads
+* Cannot adapt to evolving data patterns
 
-The simplest way to use the Queryscaler environment is through the `QueryscalerEnv` class:
+👉 QueryScaler introduces:
 
-```python
-from queryscaler import QueryscalerAction, QueryscalerEnv
+> **A learning-based optimizer that improves through interaction**
 
-try:
-    # Create environment from Docker image
-    queryscalerenv = QueryscalerEnv.from_docker_image("queryscaler-env:latest")
+---
 
-    # Reset
-    result = queryscalerenv.reset()
-    print(f"Reset: {result.observation.echoed_message}")
+## 🧠 Core Idea
 
-    # Send multiple messages
-    messages = ["Hello, World!", "Testing echo", "Final message"]
+We model SQL optimization as a **Markov Decision Process (MDP)**:
 
-    for msg in messages:
-        result = queryscalerenv.step(QueryscalerAction(message=msg))
-        print(f"Sent: '{msg}'")
-        print(f"  → Echoed: '{result.observation.echoed_message}'")
-        print(f"  → Length: {result.observation.message_length}")
-        print(f"  → Reward: {result.reward}")
+| RL Component | QueryScaler Mapping                            |
+| ------------ | ---------------------------------------------- |
+| State        | Current database + query + history             |
+| Action       | SQL execution (index, rewrite, explain)        |
+| Reward       | Performance improvement + optimization quality |
+| Policy       | Agent strategy (LLM / RL)                      |
+| Environment  | DuckDB-backed simulation                       |
 
-finally:
-    # Always clean up
-    queryscalerenv.close()
+---
+
+## 🏗️ Architecture
+
+```
+LLM Agent (Policy)
+        ↓
+Action (SQL / Explain / Finish)
+        ↓
+QueryScaler Environment
+        ↓
+DuckDB Execution + Cost Measurement
+        ↓
+Reward Computation
+        ↓
+Next State (Observation)
 ```
 
-That's it! The `QueryscalerEnv.from_docker_image()` method handles:
-- Starting the Docker container
-- Waiting for the server to be ready
-- Connecting to the environment
-- Container cleanup when you call `close()`
+---
 
-## Building the Docker Image
+## ⚙️ Environment Design
 
-Before using the environment, you need to build the Docker image:
+### 📂 Implementation
+
+* Environment: 
+* Inference Runner: 
+
+---
+
+### 🧾 State (Observation)
+
+Each step returns:
+
+* Task description
+* Available tables
+* Last query result / error
+* Current reward (progress)
+* Optimization hints
+
+---
+
+### 🎯 Action Space
+
+Agent outputs JSON:
+
+```json
+{"action_type": "execute", "sql": "..."}
+{"action_type": "explain", "sql": "..."}
+{"action_type": "finish"}
+```
+
+---
+
+### 🏆 Reward Function (Key Innovation)
+
+Reward is **multi-component + shaped for learning stability**:
+
+#### 1. Speed Improvement
+
+* Based on runtime vs baseline
+
+#### 2. Structural Quality
+
+* Penalizes:
+
+  * SELECT *
+  * excessive joins
+* Rewards:
+
+  * filters, limits
+
+#### 3. Strategy Usage
+
+* Index creation
+* CTE usage
+* Views / subqueries
+
+#### 4. Index Quality
+
+* Matches index columns with query filters
+
+#### 5. Anti-Repetition Penalty
+
+* Prevents redundant actions
+
+---
+
+### 🔥 Final Reward
+
+* Weighted combination of:
+
+  * speed + optimization signals
+* Smoothed using EMA for stability
+* Encourages **progressive learning**
+
+---
+
+## 🧪 Tasks
+
+### 🟢 Easy: Index Optimization
+
+* Optimize a filtered query on large table
+
+### 🟡 Medium: Query Rewrite + Joins
+
+* Optimize multi-table joins
+
+### 🔴 Hard: Workload Optimization
+
+* Optimize multiple queries
+* Constraint: max 2 indexes
+
+---
+
+## ⚡ Key Features
+
+* 🔄 Multi-step optimization environment
+* 📊 Real execution-based rewards (DuckDB)
+* 🧠 LLM-driven policy (ReAct style)
+* 🎯 Reward shaping for convergence
+* 🚫 Anti-repetition safeguards
+* 📈 Progressive reward scaling
+
+---
+
+## 🤖 LLM Agent Design
+
+From :
+
+### Key Behaviors
+
+* Avoid repeated actions
+* Prefer:
+
+  * CREATE INDEX
+  * Query rewrites
+* Use EXPLAIN only once
+* Learn from reward deltas
+
+---
+
+## 🛠️ Tech Stack
+
+* Python
+* DuckDB
+* OpenEnv framework
+* sqlglot (SQL parsing)
+* OpenAI / Groq LLM APIs
+
+---
+
+## ▶️ Setup
 
 ```bash
-# From project root
-docker build -t queryscaler-env:latest -f server/Dockerfile .
+git clone <repo>
+cd queryscaler
+pip install -r requirements.txt
 ```
 
-## Deploying to Hugging Face Spaces
+---
 
-You can easily deploy your OpenEnv environment to Hugging Face Spaces using the `openenv push` command:
+## 🔑 Environment Variables
 
 ```bash
-# From the environment directory (where openenv.yaml is located)
-openenv push
-
-# Or specify options
-openenv push --namespace my-org --private
+export GROQ_API_KEY=your_key
+export API_BASE_URL=https://api.groq.com/openai/v1
+export MODEL_NAME=llama3-70b-8192
 ```
 
-The `openenv push` command will:
-1. Validate that the directory is an OpenEnv environment (checks for `openenv.yaml`)
-2. Prepare a custom build for Hugging Face Docker space (enables web interface)
-3. Upload to Hugging Face (ensuring you're logged in)
+---
 
-### Prerequisites
-
-- Authenticate with Hugging Face: The command will prompt for login if not already authenticated
-
-### Options
-
-- `--directory`, `-d`: Directory containing the OpenEnv environment (defaults to current directory)
-- `--repo-id`, `-r`: Repository ID in format 'username/repo-name' (defaults to 'username/env-name' from openenv.yaml)
-- `--base-image`, `-b`: Base Docker image to use (overrides Dockerfile FROM)
-- `--private`: Deploy the space as private (default: public)
-
-### Examples
+## ▶️ Run
 
 ```bash
-# Push to your personal namespace (defaults to username/env-name from openenv.yaml)
-openenv push
-
-# Push to a specific repository
-openenv push --repo-id my-org/my-env
-
-# Push with a custom base image
-openenv push --base-image ghcr.io/meta-pytorch/openenv-base:latest
-
-# Push as a private space
-openenv push --private
-
-# Combine options
-openenv push --repo-id my-org/my-env --base-image custom-base:latest --private
+python inference_runner.py
 ```
 
-After deployment, your space will be available at:
-`https://huggingface.co/spaces/<repo-id>`
+---
 
-The deployed space includes:
-- **Web Interface** at `/web` - Interactive UI for exploring the environment
-- **API Documentation** at `/docs` - Full OpenAPI/Swagger interface
-- **Health Check** at `/health` - Container health monitoring
-- **WebSocket** at `/ws` - Persistent session endpoint for low-latency interactions
+## 📊 Example Workflow
 
-## Environment Details
+1. Agent inspects schema
+2. Runs EXPLAIN once
+3. Creates index
+4. Rewrites query
+5. Observes reward increase
+6. Iterates until optimal
 
-### Action
-**QueryscalerAction**: Contains a single field
-- `message` (str) - The message to echo back
+---
 
-### Observation
-**QueryscalerObservation**: Contains the echo response and metadata
-- `echoed_message` (str) - The message echoed back
-- `message_length` (int) - Length of the message
-- `reward` (float) - Reward based on message length (length × 0.1)
-- `done` (bool) - Always False for echo environment
-- `metadata` (dict) - Additional info like step count
+## ⚠️ Challenges Addressed
 
-### Reward
-The reward is calculated as: `message_length × 0.1`
-- "Hi" → reward: 0.2
-- "Hello, World!" → reward: 1.3
-- Empty message → reward: 0.0
+* Sparse rewards → solved via shaping
+* Large action space → constrained via SQL interface
+* Exploration vs exploitation → guided prompt + penalties
+* Realistic cost → execution-based measurement
 
-## Advanced Usage
+---
 
-### Connecting to an Existing Server
+## 🌍 Real-World Applications
 
-If you already have a Queryscaler environment server running, you can connect directly:
+* Autonomous database tuning
+* Cloud query optimization (BigQuery, Snowflake)
+* AI-driven compilers
+* Data warehouse performance tuning
 
-```python
-from queryscaler import QueryscalerEnv
+---
 
-# Connect to existing server
-queryscalerenv = QueryscalerEnv(base_url="<ENV_HTTP_URL_HERE>")
+## 🚀 Future Work
 
-# Use as normal
-result = queryscalerenv.reset()
-result = queryscalerenv.step(QueryscalerAction(message="Hello!"))
-```
+* Learned cost model (replace DuckDB estimates)
+* Graph-based state encoding (GNNs)
+* Multi-agent optimization
+* Integration with production DBs
 
-Note: When connecting to an existing server, `queryscalerenv.close()` will NOT stop the server.
+---
 
-### Using the Context Manager
+## 👨‍💻 Author
 
-The client supports context manager usage for automatic connection management:
+**Harshul Arora**
+Punjab Engineering College
 
-```python
-from queryscaler import QueryscalerAction, QueryscalerEnv
+---
 
-# Connect with context manager (auto-connects and closes)
-with QueryscalerEnv(base_url="http://localhost:8000") as env:
-    result = env.reset()
-    print(f"Reset: {result.observation.echoed_message}")
-    # Multiple steps with low latency
-    for msg in ["Hello", "World", "!"]:
-        result = env.step(QueryscalerAction(message=msg))
-        print(f"Echoed: {result.observation.echoed_message}")
-```
+## 🏆 Why This Project Stands Out
 
-The client uses WebSocket connections for:
-- **Lower latency**: No HTTP connection overhead per request
-- **Persistent session**: Server maintains your environment state
-- **Efficient for episodes**: Better for many sequential steps
+✔ Combines RL + Systems + LLMs
+✔ Real execution-based feedback (not simulated heuristics)
+✔ Generalizable optimization framework
+✔ Designed for **agent learning, not rule-based tuning**
 
-### Concurrent WebSocket Sessions
+---
 
-The server supports multiple concurrent WebSocket connections. To enable this,
-modify `server/app.py` to use factory mode:
+## 📜 License
 
-```python
-# In server/app.py - use factory mode for concurrent sessions
-app = create_app(
-    QueryscalerEnvironment,  # Pass class, not instance
-    QueryscalerAction,
-    QueryscalerObservation,
-    max_concurrent_envs=4,  # Allow 4 concurrent sessions
-)
-```
+MIT License
 
-Then multiple clients can connect simultaneously:
-
-```python
-from queryscaler import QueryscalerAction, QueryscalerEnv
-from concurrent.futures import ThreadPoolExecutor
-
-def run_episode(client_id: int):
-    with QueryscalerEnv(base_url="http://localhost:8000") as env:
-        result = env.reset()
-        for i in range(10):
-            result = env.step(QueryscalerAction(message=f"Client {client_id}, step {i}"))
-        return client_id, result.observation.message_length
-
-# Run 4 episodes concurrently
-with ThreadPoolExecutor(max_workers=4) as executor:
-    results = list(executor.map(run_episode, range(4)))
-```
-
-## Development & Testing
-
-### Direct Environment Testing
-
-Test the environment logic directly without starting the HTTP server:
-
-```bash
-# From the server directory
-python3 server/queryscaler_environment.py
-```
-
-This verifies that:
-- Environment resets correctly
-- Step executes actions properly
-- State tracking works
-- Rewards are calculated correctly
-
-### Running Locally
-
-Run the server locally for development:
-
-```bash
-uvicorn server.app:app --reload
-```
-
-## Project Structure
-
-```
-queryscaler/
-├── .dockerignore         # Docker build exclusions
-├── __init__.py            # Module exports
-├── README.md              # This file
-├── openenv.yaml           # OpenEnv manifest
-├── pyproject.toml         # Project metadata and dependencies
-├── uv.lock                # Locked dependencies (generated)
-├── client.py              # QueryscalerEnv client
-├── models.py              # Action and Observation models
-└── server/
-    ├── __init__.py        # Server module exports
-    ├── queryscaler_environment.py  # Core environment logic
-    ├── app.py             # FastAPI application (HTTP + WebSocket endpoints)
-    └── Dockerfile         # Container image definition
-```
