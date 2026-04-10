@@ -102,7 +102,7 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} "
-        f"score={max(0.0, min(1.0, score)):.3f} rewards={rewards_str}",
+        f"score={max(0.0001, min(0.9999, score)):.3f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -239,7 +239,7 @@ def run_episode(
     env = QueryscalerEnvironment()
     rewards: List[float] = []
     steps_taken = 0
-    final_score = 0.0
+    final_score = 0.01
     success     = False
     history: List[Dict[str, str]] = []
 
