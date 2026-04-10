@@ -102,7 +102,7 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} "
-        f"score={max(0.001, min(0.9999, score)):.3f} rewards={rewards_str}",
+        f"score={max(0.001, min(0.999, score)):.3f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -266,7 +266,17 @@ def run_episode(
 
             obs = env.step(action)
 
-            reward = float(obs.reward or 0.0)
+            # ---- SAFE REWARD ----
+            epsilon = 0.01
+
+            reward = float(obs.reward) if obs.reward is not None else epsilon
+
+            # NaN check
+            if not (reward == reward):
+                reward = epsilon
+
+            # strict clamp
+            reward = min(max(reward, epsilon), 0.99)
             done   = bool(obs.done)
             error  = (
                 obs.last_result
@@ -284,18 +294,23 @@ def run_episode(
             if done:
                 break
 
-        # Compute score from rewards (not obs.progress)
-        if rewards and len(rewards) > 0:
+        # ---- SAFE FINAL SCORE ----
+        epsilon = 0.01
+        if not rewards:
+            rewards = [0.01]
+        if rewards:
             final_score = sum(rewards) / len(rewards)
         else:
-            final_score = 0.5  # safe fallback
+            final_score = epsilon
 
-        # Force STRICTLY between (0,1)
-        if final_score <= 0.0:
-            final_score = 0.01
-        elif final_score >= 1.0:
-            final_score = 0.99
+        # NaN check
+        if not (final_score == final_score):
+            final_score = epsilon
 
+        
+
+        # And final_score clamp:
+        final_score = min(max(final_score, 0.001), 0.999)
         success = final_score >= SUCCESS_SCORE_THRESHOLD
 
     finally:
