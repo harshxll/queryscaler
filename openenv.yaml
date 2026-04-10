@@ -3,7 +3,7 @@ version: 1.0.0
 description: Cross-platform query optimization sandbox with three graded tasks (DuckDB)
 author: Harshul
 license: MIT
-entrypoint: python -m queryscaler.server.app
+entrypoint: python -m server.app
 
 action_space:
   type: object

@@ -31,6 +31,9 @@ COPY . /app/env
 # For standalone builds, openenv will be installed via pyproject.toml
 WORKDIR /app/env
 
+# Defensive cleanup: if host .venv was copied from build context, remove it.
+RUN rm -rf /app/env/.venv
+
 # Ensure uv is available (for local builds where base image lacks it)
 RUN if ! command -v uv >/dev/null 2>&1; then \
         curl -LsSf https://astral.sh/uv/install.sh | sh && \
@@ -77,4 +80,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 # Run the FastAPI server
 # The module path is constructed to work with the /app/env structure
-CMD ["sh", "-c", "cd /app/env && python -m queryscaler.server.app"]
+CMD ["sh", "-c", "cd /app/env && python -m server.app"]

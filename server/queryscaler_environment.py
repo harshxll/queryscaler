@@ -13,12 +13,13 @@ import time
 import tempfile
 import shutil
 import re
-import sqlglot
-from sqlglot import exp
+import statistics
+import sqlglot #type: ignore
+from sqlglot import exp #type: ignore
 from uuid import uuid4
 from typing import List, Dict, Optional, Any, Tuple
 
-import duckdb #type: ignore
+import duckdb #type: ignore 
 
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
@@ -40,6 +41,9 @@ class QueryscalerEnvironment(Environment):
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
     def __init__(self):
+        self._enable_hints = os.environ.get("QUERYSCALER_ENABLE_HINTS", "0").lower() in {
+            "1", "true", "yes", "on"
+        }
         self._task_index = 0
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._init_episode()
@@ -63,6 +67,11 @@ class QueryscalerEnvironment(Environment):
         self._step = 0
         self._done = False
         self._optimization_attempted = False
+        self._used_explain = False
+        self._meaningful_actions = 0
+        self._reward_ema = 0.0
+        self._best_reward = 0.0
+        self._created_indexes = set()
         self._temp_dir = tempfile.mkdtemp(prefix="queryscaler_")
         self.db_path = os.path.join(self._temp_dir, "data.db")
         self._setup_task_data()
@@ -87,8 +96,9 @@ class QueryscalerEnvironment(Environment):
                 "for a specific customer (e.g., customer ID 42). The current process is slow.\n\n"
                 "Your goal: Improve the performance of these lookups.\n\n"
                 "You have full access to the 'orders' table. Use EXPLAIN to understand "
-                "current query plans, and execute any SQL to create indexes or rewrite queries. "
-                "You will receive a reward based on performance improvement.\n\n"
+                "current query plans, and execute SQL to optimize. You can try composite indexing, "
+                "query rewrites, reduced column scans, or precomputation strategies. "
+                "You will receive reward based on measured speed and optimization quality.\n\n"
                 "Start by examining the schema (execute 'DESCRIBE orders') and exploring!"
             )
 
@@ -122,8 +132,8 @@ class QueryscalerEnvironment(Environment):
                 "to show recent large transactions. The dashboard is timing out during peak hours.\n\n"
                 "Your goal: Make this reporting query significantly faster.\n\n"
                 "You have tables: 'sales', 'products', 'categories'. "
-                "Use any SQL technique (indexes, query rewrites, CTEs, views). "
-                "Experiment and find the best optimization!"
+                "Use any SQL technique (indexes, query rewrites, CTEs, views, predicate pushdown, "
+                "projection pruning). Compare alternatives and keep the most effective one."
             )
 
         else:  # Hard – Workload tuning without explicit queries
@@ -145,24 +155,32 @@ class QueryscalerEnvironment(Environment):
                 "2. A detailed view of a single user's high‑value events.\n"
                 "3. An average value aggregation for recent events.\n\n"
                 "You may create AT MOST 2 INDEXES total. Your goal is to maximize the "
-                "overall performance improvement across all three queries.\n\n"
+                "overall performance improvement across all three queries. Consider index tradeoffs, "
+                "query rewrites, and balanced improvements rather than optimizing only one query.\n\n"
                 "First, explore the 'events' schema and then decide which indexes to create. "
                 "You can also rewrite queries if helpful."
             )
 
-        # Measure baseline cost (still needed for reward calculation)
-        self._baseline_time = self._measure_baseline_time(self._baseline_query)
+        # Baseline timings for stable, fair speed comparisons.
         if self._task_index < 2:
-            self._baseline_cost = self._estimate_query_cost(self._baseline_query)
+            self._evaluation_queries = [self._baseline_query]
         else:
-            self._baseline_cost = sum(
-                self._estimate_query_cost(q) for q in self._workload_queries
-            ) / len(self._workload_queries)
+            self._evaluation_queries = list(self._workload_queries)
+
+        self._baseline_times = {
+            query: self._measure_baseline_time(query)
+            for query in self._evaluation_queries
+        }
+        self._baseline_time = statistics.mean(self._baseline_times.values())
+
     def _measure_query_time(self, query: str) -> float:
         conn = duckdb.connect(self.db_path)
         start = time.time()
-        conn.execute(query).fetchall()
-        return time.time() - start
+        try:
+            conn.execute(query).fetchall()
+            return time.time() - start
+        finally:
+            conn.close()
 
     def _estimate_query_cost(self, query: str) -> float:
         conn = duckdb.connect(self.db_path)
@@ -180,10 +198,7 @@ class QueryscalerEnvironment(Environment):
         finally:
             conn.close()
 
-    # Replace _measure_baseline_time() to use median:
-
     def _measure_baseline_time(self, query: str, runs: int = 5) -> float:
-        import statistics
         times = []
         for _ in range(runs):
             conn = duckdb.connect(self.db_path)
@@ -193,7 +208,16 @@ class QueryscalerEnvironment(Environment):
             conn.close()
         return statistics.median(times)
 
-    # Replace _grade() entirely — use median of 5 runs for stability:
+    def _stable_query_time(self, query: str, runs: int = 3) -> float:
+        times = []
+        for _ in range(runs):
+            conn = duckdb.connect(self.db_path)
+            start = time.time()
+            conn.execute(query).fetchall()
+            times.append(time.time() - start)
+            conn.close()
+        return statistics.median(times)
+
     def _extract_index_columns(self, sql):
         match = re.search(r"\((.*?)\)", sql)
         if not match:
@@ -262,83 +286,70 @@ class QueryscalerEnvironment(Environment):
             score += 0.2
         if self._schema_change:
             score += 0.3
+        if self._used_explain:
+            score += 0.1
 
-        return score
+        return min(score, 1.0)
 
     def _grade(self) -> float:
-        import statistics
-
-        def stable_time(query: str, runs: int = 5) -> float:
-            times = []
-            for _ in range(runs):
-                conn = duckdb.connect(self.db_path)
-                start = time.time()
-                conn.execute(query).fetchall()
-                times.append(time.time() - start)
-                conn.close()
-            return statistics.median(times)
-
-        # ✅ choose query (supports rewrites)
+        # choose query (supports rewrites for easy/medium)
         query = self._optimized_query or self._baseline_query
 
-        # ======================
-        # 1. SPEED COMPONENT
-        # ======================
+        # 1) Speed component (primary signal)
         if self._task_index < 2:
-            current_time = stable_time(query)
-
-            # simulate index benefit (DuckDB limitation)
-            if self._used_index:
-                current_time *= 0.6
-
-            speedup = self._baseline_time / max(current_time, 1e-6)
-            speed_score = max(0.0, speedup - 1.0)
+            baseline_time = self._baseline_times[self._baseline_query]
+            current_time = self._stable_query_time(query)
+            speedup = baseline_time / max(current_time, 1e-6)
+            speed_score = min(max((speedup - 1.0) / 0.5, 0.0), 1.0)
 
         else:
             speedups = []
             for q in self._workload_queries:
-                ct = stable_time(q)
-                bt = self._baseline_time
+                ct = self._stable_query_time(q)
+                bt = self._baseline_times[q]
                 speedups.append(bt / max(ct, 1e-6))
-            speed_score = max(0.0, (sum(speedups)/len(speedups)) - 1.0)
+            avg_speedup = sum(speedups) / len(speedups)
+            speed_score = min(max((avg_speedup - 1.0) / 0.35, 0.0), 1.0)
 
-        # ======================
-        # 2. STRUCTURAL SCORE
-        # ======================
-        struct_score = self._structural_score(query)
+        # 2) Structural score normalized to [0, 1]
+        struct_raw = self._structural_score(query)
+        struct_score = min(max((struct_raw + 0.5) / 1.4, 0.0), 1.0)
 
-        # ======================
-        # 3. STRATEGY SCORE
-        # ======================
+        # 3) Strategy score
         strat_score = self._strategy_score()
 
-        # ======================
-        # 4. INDEX QUALITY
-        # ======================
+        # 4) Index quality
         index_score = self._best_index_score
 
-        # ======================
-        # 5. REPETITION PENALTY
-        # ======================
+        # 5) Repetition penalty
         repeat_penalty = sum(
-            0.1 * (c - 1) for c in self._action_counts.values() if c > 1
+            0.03 * (c - 1) for c in self._action_counts.values() if c > 1
         )
 
-        # ======================
-        # 6. FINAL COMBINATION
-        # ======================
-        reward = (
-            0.4 * speed_score +
-            0.2 * struct_score +
+        # 6) Progressive reward shaping for smoother convergence.
+        optimization_signal = min(
+            1.0,
+            0.7 * index_score +
             0.2 * strat_score +
-            0.2 * index_score
-            - repeat_penalty
+            0.1 * struct_score,
         )
+        raw_reward = 0.35 * speed_score + 0.65 * optimization_signal
 
-        return max(0.0, min(1.0, reward))
+        # Start low and grow as the agent performs meaningful optimization actions.
+        progression = min(1.0, self._meaningful_actions / 2.0)
+        target_reward = max(0.0, min(1.0, (raw_reward * progression) - repeat_penalty))
+
+        # EMA + best-so-far tracking lowers variance and encourages convergence.
+        self._reward_ema = 0.45 * target_reward + 0.55 * self._reward_ema
+        self._best_reward = max(self._best_reward, self._reward_ema)
+
+        return max(0.0, min(1.0, self._best_reward))
 
     def _max_steps(self) -> int:
         return [10, 15, 20][self._task_index]
+
+    def _min_finish_steps(self) -> int:
+        return [3, 4, 5][self._task_index]
 
     def reset(self) -> QueryscalerObservation:
         if hasattr(self, '_temp_dir') and os.path.exists(self._temp_dir):
@@ -365,22 +376,45 @@ class QueryscalerEnvironment(Environment):
                 # track optimized query
                 if sql_lower.startswith("select"):
                     self._optimized_query = sql
+                    if sql_lower != self._baseline_query.strip().lower():
+                        self._optimization_attempted = True
 
                 # strategy detection
                 if "create index" in sql_lower:
                     self._used_index = True
+                    self._meaningful_actions += 1
 
                 if "with " in sql_lower:
                     self._used_cte = True
+                    self._meaningful_actions += 1
 
                 if "create view" in sql_lower:
                     self._used_view = True
+                    self._meaningful_actions += 1
 
                 if "select" in sql_lower and "(" in sql_lower:
                     self._used_subquery = True
+                    self._meaningful_actions += 1
 
                 if "create table" in sql_lower or "alter table" in sql_lower:
                     self._schema_change = True
+                    self._meaningful_actions += 1
+
+                if "create index" in sql_lower:
+                    if self._task_index == 2:
+                        match = re.search(
+                            r"create\s+index\s+(?:if\s+not\s+exists\s+)?([a-zA-Z_][a-zA-Z0-9_]*)",
+                            sql_lower,
+                        )
+                        idx_name = match.group(1) if match else None
+                        if idx_name and idx_name not in self._created_indexes and len(self._created_indexes) >= 2:
+                            self._last_result = "Hard task limit reached: at most 2 indexes are allowed."
+                            self._last_exit_code = 1
+                            reward = self._grade()
+                            self._done = self._step >= self._max_steps()
+                            return self._make_observation(reward=reward, done=self._done)
+                        if idx_name:
+                            self._created_indexes.add(idx_name)
                 
                 if "create index" in sql_lower:
                     score = self._score_index(sql_lower)
@@ -395,7 +429,7 @@ class QueryscalerEnvironment(Environment):
                         output = "Statement executed successfully."
                     self._last_result = output[:1000]
                     self._last_exit_code = 0
-                    if sql.upper().strip().startswith(("CREATE INDEX", "CREATE VIEW")):
+                    if sql.upper().strip().startswith(("CREATE INDEX", "CREATE VIEW", "WITH ")):
                         self._optimization_attempted = True
                 except Exception as e:
                     self._last_result = str(e)
@@ -408,13 +442,26 @@ class QueryscalerEnvironment(Environment):
                     plan = conn.execute(f"EXPLAIN {sql}").fetchall()
                     self._last_result = "\n".join(str(row) for row in plan)[:1000]
                     self._last_exit_code = 0
+                    self._used_explain = True
+                    self._meaningful_actions += 1
                 except Exception as e:
                     self._last_result = f"EXPLAIN error: {e}"[:1000]
                     self._last_exit_code = 1
                 finally:
                     conn.close()
             elif action.action_type == "finish":
+                if self._step < self._min_finish_steps():
+                    self._last_result = (
+                        f"Finish is locked until step {self._min_finish_steps()} for this task. "
+                        "Try more optimization actions first."
+                    )
+                    self._last_exit_code = 1
+                    reward = max(0.0, self._grade() - 0.05)
+                    self._done = False
+                    return self._make_observation(reward=reward, done=False)
                 reward = self._grade()
+                if self._optimization_attempted:
+                    reward = min(1.0, reward + 0.2)
                 self._done = True
                 return self._make_observation(reward=reward, done=True)
             else:
@@ -425,10 +472,8 @@ class QueryscalerEnvironment(Environment):
             self._last_exit_code = 1
 
         reward = self._grade()
-        self._done = (reward >= 0.8 and self._task_index == 0 and self._optimization_attempted) or \
-                     (reward >= 0.7 and self._task_index == 1 and self._optimization_attempted) or \
-                     (reward >= 0.6 and self._task_index == 2 and self._optimization_attempted) or \
-                     self._step >= self._max_steps()
+        # Avoid premature termination. The agent should iterate and improve over time.
+        self._done = self._step >= self._max_steps()
         return self._make_observation(reward=reward, done=self._done)
 
     def _make_observation(self, reward: float, done: bool) -> QueryscalerObservation:
@@ -437,31 +482,16 @@ class QueryscalerEnvironment(Environment):
         tables = [row[0] for row in conn.execute("SHOW TABLES").fetchall()]
         conn.close()
         
-        hints = [
-            "Use EXPLAIN to see query plan",
-            "CREATE INDEX, rewrite query, use CTE, or create view",
-            f"Steps left: {self._max_steps() - self._step}",
-            f"Baseline query being measured: {self._baseline_query}",
-        ]
-        query = self._optimized_query or self._baseline_query
-
-        try:
-            tree = sqlglot.parse_one(query)
-            ast_str = tree.to_s()
-            hints.append(f"AST:\n{ast_str[:500]}")
-        except:
-            hints.append("AST: parsing failed")
-            
-        if not self._optimization_attempted and self._step >= 3:
-            hints.insert(0, "Hint: Try creating an index or rewriting with a subquery.")
-        
-        # ✅ ADD THIS BLOCK RIGHT HERE
-        if self._task_index < 2:
-            try:
-                current_cost = self._estimate_query_cost(self._baseline_query)
-                hints.append(f"Current query cost: {current_cost:.2f}  (baseline: {self._baseline_cost:.2f})")
-            except Exception:
-                pass  # Skip if cost estimation fails
+        hints = []
+        if self._enable_hints:
+            hints = [
+                f"Steps left: {self._max_steps() - self._step}",
+                "Use EXPLAIN and measured runtime to validate improvements.",
+            ]
+            if self._task_index == 2:
+                hints.append(f"Indexes created: {len(self._created_indexes)}/2")
+            if not self._optimization_attempted and self._step >= 3:
+                hints.append("No optimization detected yet. Try index creation or a query rewrite.")
         
         return QueryscalerObservation(
             step_number=self._step,

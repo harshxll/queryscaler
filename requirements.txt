@@ -1,0 +1,6 @@
+openenv-core[core]
+fastapi
+uvicorn
+sqlglot 
+
+
