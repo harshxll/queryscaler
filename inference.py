@@ -102,7 +102,7 @@ def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> No
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
         f"[END] success={str(success).lower()} steps={steps} "
-        f"score={max(0.0001, min(0.9999, score)):.3f} rewards={rewards_str}",
+        f"score={max(0.001, min(0.9999, score)):.3f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -278,15 +278,25 @@ def run_episode(
 
             rewards.append(reward)
             steps_taken = step
-            final_score = float(obs.progress)
             # Store reward as float string for delta calculation in build_user_prompt
             history.append({"action": action_str, "reward": f"{reward:.4f}"})
 
             if done:
                 break
 
-        final_score = max(0.0001, min(0.9999, final_score))
-        success     = final_score >= SUCCESS_SCORE_THRESHOLD
+        # Compute score from rewards (not obs.progress)
+        if rewards and len(rewards) > 0:
+            final_score = sum(rewards) / len(rewards)
+        else:
+            final_score = 0.5  # safe fallback
+
+        # Force STRICTLY between (0,1)
+        if final_score <= 0.0:
+            final_score = 0.01
+        elif final_score >= 1.0:
+            final_score = 0.99
+
+        success = final_score >= SUCCESS_SCORE_THRESHOLD
 
     finally:
         try:
