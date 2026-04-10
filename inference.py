@@ -26,7 +26,7 @@ except ModuleNotFoundError:
 # ── Environment configuration (mandatory) ────────────────────────────────────
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
 MODEL_NAME   = os.getenv("MODEL_NAME",   "llama3-70b-8192")
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_KEY = os.getenv("API_KEY")
 
 BENCHMARK               = "queryscaler"
 TEMPERATURE             = 0.0
@@ -302,7 +302,7 @@ def run_episode(
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY) if (API_BASE_URL and API_KEY) else None
     for task_index, task_name, max_steps in GRADE_LEVELS:
         run_episode(client, task_index, task_name, max_steps)
 

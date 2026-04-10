@@ -3,7 +3,7 @@ title: QueryScaler
 colorFrom: blue
 colorTo: purple
 sdk: docker
-app_port: 7860
+app_port: 8000
 ---
 # QueryScaler
 
